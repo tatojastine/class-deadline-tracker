@@ -53,6 +53,8 @@ This project was created to help students manage school requirements, stay organ
 
 ## Author
 
+Dolo John Troy
+Ribaya Jallyn
 Tato Jastine Nicole
 
 ## License
