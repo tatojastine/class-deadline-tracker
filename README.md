@@ -51,11 +51,11 @@ A web application that helps students organize their academic tasks, monitor upc
 
 This project was created to help students manage school requirements, stay organized, and avoid missing assignment deadlines.
 
-## Author
+## Authors
 
-Dolo John Troy
-Ribaya Jallyn
-Tato Jastine Nicole
+- Dolo John Troy
+- Ribaya Jallyn
+- Tato Jastine Nicole
 
 ## License
 
