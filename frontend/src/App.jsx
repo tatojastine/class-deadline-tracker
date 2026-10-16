@@ -1,21 +1,25 @@
+
 import { useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
   CalendarDays,
+  Check,
   CheckCircle2,
+  Circle,
   Clock3,
   GraduationCap,
   LayoutDashboard,
-  LoaderCircle,
+  ListTodo,
+  Moon,
+  Pencil,
   Plus,
   Search,
-  Sparkles,
+  Settings,
+  Sun,
   Trash2,
-  Pencil,
   X,
   AlertCircle,
-  CircleCheck,
-  ClipboardList,
+  Menu,
 } from "lucide-react";
 import "./App.css";
 
@@ -24,67 +28,104 @@ const API_URL = "http://localhost:5000/api/assignments";
 const emptyForm = {
   title: "",
   subject: "",
-  due_date: "",
+  dueDate: "",
+  priority: "Medium",
+  status: "Not Started",
   description: "",
 };
 
-function normalizeAssignment(item) {
-  return {
-    ...item,
-    due_date: item.due_date ?? item.dueDate ?? "",
-    completed: Boolean(item.completed ?? item.is_completed ?? item.returned),
-  };
+function getTitle(item) {
+  return item.title ?? item.name ?? "";
 }
 
-function formatDate(dateString) {
-  if (!dateString) return "No due date";
+function getSubject(item) {
+  return item.subject ?? item.course ?? "";
+}
 
-  const date = new Date(`${dateString.slice(0, 10)}T00:00:00`);
+function getDueDate(item) {
+  return item.dueDate ?? item.due_date ?? "";
+}
 
-  if (Number.isNaN(date.getTime())) return dateString;
+function getStatus(item) {
+  if (item.completed === true || item.completed === 1) return "Completed";
 
-  return date.toLocaleDateString("en-US", {
+  const status = item.status ?? "Not Started";
+  return status === "In Progress" || status === "Completed"
+    ? status
+    : "Not Started";
+}
+
+function getPriority(item) {
+  const priority = item.priority ?? "Medium";
+  return ["Low", "Medium", "High"].includes(priority) ? priority : "Medium";
+}
+
+function formatDate(date) {
+  if (!date) return "No due date";
+
+  const parsed = new Date(`${date}`.slice(0, 10) + "T00:00:00");
+  if (Number.isNaN(parsed.getTime())) return date;
+
+  return parsed.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
   });
 }
 
-function getDeadlineStatus(assignment) {
-  if (assignment.completed) {
-    return { label: "Completed", type: "completed" };
-  }
-
-  if (!assignment.due_date) {
-    return { label: "No deadline", type: "neutral" };
-  }
+function getDeadlineLabel(date, status) {
+  if (status === "Completed") return "Completed";
+  if (!date) return "No due date";
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const dueDate = new Date(`${assignment.due_date.slice(0, 10)}T00:00:00`);
+  const due = new Date(`${date}`.slice(0, 10) + "T00:00:00");
+  if (Number.isNaN(due.getTime())) return "Scheduled";
 
-  if (dueDate < today) {
-    return { label: "Overdue", type: "overdue" };
-  }
+  const difference = Math.round((due - today) / 86400000);
 
-  if (dueDate.getTime() === today.getTime()) {
-    return { label: "Due today", type: "today" };
-  }
-
-  return { label: "Upcoming", type: "upcoming" };
+  if (difference < 0) return "Overdue";
+  if (difference === 0) return "Due today";
+  if (difference <= 7) return "Due soon";
+  return "Upcoming";
 }
 
-function App() {
+function normalizeAssignment(item) {
+  return {
+    ...item,
+    title: getTitle(item),
+    subject: getSubject(item),
+    dueDate: getDueDate(item),
+    priority: getPriority(item),
+    status: getStatus(item),
+    description: item.description ?? "",
+  };
+}
+
+export default function App() {
   const [assignments, setAssignments] = useState([]);
-  const [form, setForm] = useState(emptyForm);
-  const [editingId, setEditingId] = useState(null);
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("All");
+  const [theme, setTheme] = useState(
+    () => localStorage.getItem("class-deadline-theme") || "light"
+  );
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [form, setForm] = useState(emptyForm);
+
+  useEffect(() => {
+    localStorage.setItem("class-deadline-theme", theme);
+  }, [theme]);
+
+  useEffect(() => {
+    loadAssignments();
+  }, []);
 
   async function loadAssignments() {
     setLoading(true);
@@ -92,41 +133,48 @@ function App() {
 
     try {
       const response = await fetch(API_URL);
-
       if (!response.ok) {
-        throw new Error("Could not load assignments from the server.");
+        throw new Error(`Server returned ${response.status}`);
       }
 
       const data = await response.json();
-      const rows = Array.isArray(data)
+      const list = Array.isArray(data)
         ? data
         : data.assignments ?? data.data ?? [];
 
-      setAssignments(rows.map(normalizeAssignment));
+      setAssignments(list.map(normalizeAssignment));
     } catch (err) {
       setError(
-        err.message === "Failed to fetch"
-          ? "Cannot connect to the backend. Make sure your Express server is running on port 5000."
-          : err.message
+        "Unable to connect to the backend. Make sure your Express server is running at localhost:5000."
       );
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    loadAssignments();
-  }, []);
-
   const stats = useMemo(() => {
-    const total = assignments.length;
-    const completed = assignments.filter((item) => item.completed).length;
-    const pending = total - completed;
-    const overdue = assignments.filter(
-      (item) => getDeadlineStatus(item).type === "overdue"
+    const completed = assignments.filter(
+      (item) => getStatus(item) === "Completed"
     ).length;
 
-    return { total, completed, pending, overdue };
+    const overdue = assignments.filter(
+      (item) => getDeadlineLabel(getDueDate(item), getStatus(item)) === "Overdue"
+    ).length;
+
+    const dueSoon = assignments.filter((item) => {
+      const label = getDeadlineLabel(getDueDate(item), getStatus(item));
+      return label === "Due today" || label === "Due soon";
+    }).length;
+
+    return {
+      total: assignments.length,
+      completed,
+      overdue,
+      dueSoon,
+      percentage: assignments.length
+        ? Math.round((completed / assignments.length) * 100)
+        : 0,
+    };
   }, [assignments]);
 
   const filteredAssignments = useMemo(() => {
@@ -134,568 +182,624 @@ function App() {
       .filter((item) => {
         const query = search.toLowerCase();
 
-        const matchesSearch =
-          (item.title ?? "").toLowerCase().includes(query) ||
-          (item.subject ?? "").toLowerCase().includes(query) ||
-          (item.description ?? "").toLowerCase().includes(query);
+        const matchesSearch = [
+          getTitle(item),
+          getSubject(item),
+          item.description,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(query);
 
-        const status = getDeadlineStatus(item).type;
-
+        const status = getStatus(item);
         const matchesFilter =
-          filter === "all" ||
-          (filter === "pending" && !item.completed) ||
-          (filter === "completed" && item.completed) ||
-          (filter === "overdue" && status === "overdue");
+          filter === "All" ||
+          (filter === "Overdue" &&
+            getDeadlineLabel(getDueDate(item), status) === "Overdue") ||
+          status === filter;
 
         return matchesSearch && matchesFilter;
       })
       .sort((a, b) => {
-        if (a.completed !== b.completed) return a.completed ? 1 : -1;
-        if (!a.due_date) return 1;
-        if (!b.due_date) return -1;
-        return a.due_date.localeCompare(b.due_date);
+        if (!getDueDate(a)) return 1;
+        if (!getDueDate(b)) return -1;
+        return getDueDate(a).localeCompare(getDueDate(b));
       });
   }, [assignments, search, filter]);
 
-  function handleChange(event) {
+  function openAddForm() {
+    setEditingId(null);
+    setForm(emptyForm);
+    setFormOpen(true);
+    setNotice("");
+  }
+
+  function openEditForm(item) {
+    setEditingId(item.id);
+    setForm({
+      title: getTitle(item),
+      subject: getSubject(item),
+      dueDate: getDueDate(item).slice(0, 10),
+      priority: getPriority(item),
+      status: getStatus(item),
+      description: item.description ?? "",
+    });
+    setFormOpen(true);
+    setNotice("");
+  }
+
+  function closeForm() {
+    setFormOpen(false);
+    setEditingId(null);
+    setForm(emptyForm);
+  }
+
+  function updateForm(event) {
     const { name, value } = event.target;
     setForm((previous) => ({ ...previous, [name]: value }));
   }
 
-  function resetForm() {
-    setForm(emptyForm);
-    setEditingId(null);
-  }
-
-  async function handleSubmit(event) {
+  async function saveAssignment(event) {
     event.preventDefault();
+    setSaving(true);
     setError("");
     setNotice("");
-
-    if (!form.title.trim() || !form.subject.trim()) {
-      setError("Please enter both an assignment title and a subject.");
-      return;
-    }
-
-    setSaving(true);
 
     const payload = {
       title: form.title.trim(),
       subject: form.subject.trim(),
-      due_date: form.due_date || null,
-      dueDate: form.due_date || null,
+      dueDate: form.dueDate,
+      priority: form.priority,
+      status: form.status,
       description: form.description.trim(),
     };
 
     try {
+      const editing = editingId !== null && editingId !== undefined;
       const response = await fetch(
-        editingId !== null ? `${API_URL}/${editingId}` : API_URL,
+        editing ? `${API_URL}/${editingId}` : API_URL,
         {
-          method: editingId !== null ? "PUT" : "POST",
+          method: editing ? "PUT" : "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         }
       );
 
       if (!response.ok) {
-        const result = await response.json().catch(() => ({}));
-        throw new Error(result.message || "Unable to save the assignment.");
+        const message = await response.text();
+        throw new Error(message || `Request failed (${response.status})`);
       }
-      
+
+      closeForm();
       await loadAssignments();
-      setNotice(editingId !== null ? "Assignment updated successfully." : "Assignment added successfully.");
-      resetForm();
+      setNotice(editing ? "Assignment updated successfully." : "Assignment added successfully.");
     } catch (err) {
       setError(
-        err.message === "Failed to fetch"
-          ? "Cannot connect to the backend. Check that your server is running."
-          : err.message
+        `Could not save the assignment. Check that your backend accepts the fields title, subject, dueDate, priority, status, and description. ${err.message}`
       );
     } finally {
       setSaving(false);
     }
   }
 
-  function startEditing(item) {
-    setEditingId(item.id);
-    setForm({
-      title: item.title ?? "",
-      subject: item.subject ?? "",
-      due_date: item.due_date ? item.due_date.slice(0, 10) : "",
-      description: item.description ?? "",
-    });
-    setError("");
-    setNotice("");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
+  async function deleteAssignment(item) {
+    const confirmed = window.confirm(
+      `Delete "${getTitle(item)}"? This cannot be undone.`
+    );
 
-  async function deleteAssignment(id) {
-    if (!window.confirm("Are you sure you want to delete this assignment?")) {
-      return;
-    }
+    if (!confirmed) return;
 
     setError("");
     setNotice("");
 
     try {
-      const response = await fetch(`${API_URL}/${id}`, {
+      const response = await fetch(`${API_URL}/${item.id}`, {
         method: "DELETE",
       });
 
       if (!response.ok) {
-        throw new Error("Unable to delete this assignment.");
+        throw new Error(`Server returned ${response.status}`);
       }
 
-      setAssignments((previous) => previous.filter((item) => item.id !== id));
+      await loadAssignments();
       setNotice("Assignment deleted successfully.");
-
-      if (editingId === id) resetForm();
     } catch (err) {
-      setError(
-        err.message === "Failed to fetch"
-          ? "Cannot connect to the backend. Check that your server is running."
-          : err.message
-      );
+      setError("Could not delete the assignment. Check your backend API.");
     }
   }
 
   async function toggleCompleted(item) {
+    const nextStatus =
+      getStatus(item) === "Completed" ? "Not Started" : "Completed";
+
+    const payload = {
+      title: getTitle(item),
+      subject: getSubject(item),
+      dueDate: getDueDate(item),
+      priority: getPriority(item),
+      status: nextStatus,
+      description: item.description ?? "",
+    };
+
     setError("");
     setNotice("");
-
-    const nextCompleted = !item.completed;
 
     try {
       const response = await fetch(`${API_URL}/${item.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: item.title,
-          subject: item.subject,
-          due_date: item.due_date || null,
-          dueDate: item.due_date || null,
-          description: item.description ?? "",
-          completed: nextCompleted,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
-        throw new Error("Unable to update the assignment status.");
+        throw new Error(`Server returned ${response.status}`);
       }
 
-      setAssignments((previous) =>
-        previous.map((assignment) =>
-          assignment.id === item.id
-            ? { ...assignment, completed: nextCompleted }
-            : assignment
-        )
+      await loadAssignments();
+      setNotice(
+        nextStatus === "Completed"
+          ? "Assignment marked as completed."
+          : "Assignment marked as not started."
       );
-      setNotice(nextCompleted ? "Great work! Assignment completed." : "Assignment marked as pending.");
     } catch (err) {
-      setError(
-        err.message === "Failed to fetch"
-          ? "Cannot connect to the backend. Check that your server is running."
-          : err.message
-      );
+      setError("Could not update the assignment status. Check your backend API.");
     }
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <a className="brand" href="#" aria-label="Class Deadline Tracker home">
+    <div className={`app-shell theme-${theme}`}>
+      <aside className={`sidebar ${mobileMenuOpen ? "sidebar-open" : ""}`}>
+        <div className="brand">
           <div className="brand-icon">
-            <GraduationCap size={25} />
+            <GraduationCap size={27} />
           </div>
           <div>
-            <span className="brand-name">StudySpace</span>
-            <span className="brand-caption">STUDENT PLANNER</span>
+            <strong>Class Deadline</strong>
+            <span>TRACKER</span>
           </div>
-        </a>
+          <button
+            className="icon-button sidebar-close"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-label="Close navigation"
+          >
+            <X size={19} />
+          </button>
+        </div>
 
-        <div className="sidebar-section-label">WORKSPACE</div>
+        <div className="sidebar-label">WORKSPACE</div>
+        <nav className="side-nav">
+          <button className="nav-item active" onClick={() => setFilter("All")}>
+            <LayoutDashboard size={19} />
+            <span>Dashboard</span>
+          </button>
+          <button className="nav-item" onClick={() => setFilter("All")}>
+            <ListTodo size={19} />
+            <span>My Assignments</span>
+            <span className="nav-count">{assignments.length}</span>
+          </button>
+          <button className="nav-item" onClick={openAddForm}>
+            <Plus size={19} />
+            <span>Add Assignment</span>
+          </button>
+        </nav>
 
-        <button className="nav-link active" type="button">
-          <LayoutDashboard size={19} />
-          <span>Dashboard</span>
-        </button>
-
+        <div className="sidebar-label secondary-label">PREFERENCES</div>
         <button
-          className="nav-link"
-          type="button"
-          onClick={() => {
-            setFilter("all");
-            document.getElementById("assignments")?.scrollIntoView({ behavior: "smooth" });
-          }}
+          className="nav-item theme-nav"
+          onClick={() => setTheme(theme === "light" ? "dark" : "light")}
         >
-          <ClipboardList size={19} />
-          <span>My assignments</span>
-          <span className="nav-count">{stats.total}</span>
-        </button>
-
-        <button
-          className="nav-link"
-          type="button"
-          onClick={() => {
-            setFilter("pending");
-            document.getElementById("assignments")?.scrollIntoView({ behavior: "smooth" });
-          }}
-        >
-          <Clock3 size={19} />
-          <span>Pending tasks</span>
-        </button>
-
-        <button
-          className="nav-link"
-          type="button"
-          onClick={() => {
-            setFilter("completed");
-            document.getElementById("assignments")?.scrollIntoView({ behavior: "smooth" });
-          }}
-        >
-          <CheckCircle2 size={19} />
-          <span>Completed</span>
+          {theme === "light" ? <Moon size={19} /> : <Sun size={19} />}
+          <span>{theme === "light" ? "Dark navy theme" : "Light theme"}</span>
+          <span className="theme-switch-mini">
+            <span />
+          </span>
         </button>
 
         <div className="sidebar-bottom">
-          <div className="sidebar-tip-icon">
-            <Sparkles size={20} />
+          <div className="focus-card">
+            <div className="focus-icon">
+              <CheckCircle2 size={22} />
+            </div>
+            <strong>One task at a time.</strong>
+            <p>Small progress adds up to big achievements.</p>
           </div>
-          <p className="sidebar-tip-title">Small steps count!</p>
-          <p className="sidebar-tip-text">
-            Stay organized, finish your tasks, and make time for yourself.
-          </p>
-          <div className="tip-progress">
-            <span style={{ width: `${stats.total ? (stats.completed / stats.total) * 100 : 0}%` }} />
+          <div className="profile">
+            <div className="avatar">ST</div>
+            <div className="profile-info">
+              <strong>Student</strong>
+              <span>Keep learning</span>
+            </div>
+            <Settings size={18} className="profile-settings" />
           </div>
-          <span className="tip-progress-label">
-            {stats.total ? Math.round((stats.completed / stats.total) * 100) : 0}% of tasks completed
-          </span>
         </div>
       </aside>
 
+      {mobileMenuOpen && (
+        <button
+          className="mobile-overlay"
+          onClick={() => setMobileMenuOpen(false)}
+          aria-label="Close navigation overlay"
+        />
+      )}
+
       <main className="main-content">
         <header className="topbar">
+          <button
+            className="icon-button mobile-menu-button"
+            onClick={() => setMobileMenuOpen(true)}
+            aria-label="Open navigation"
+          >
+            <Menu size={22} />
+          </button>
+
           <div className="breadcrumb">
             <span>Workspace</span>
             <span className="breadcrumb-slash">/</span>
             <strong>Dashboard</strong>
           </div>
-          <div className="topbar-right">
-            <span className="today-label">
-              <CalendarDays size={16} />
-              {new Date().toLocaleDateString("en-US", {
-                weekday: "short",
-                month: "short",
-                day: "numeric",
-              })}
-            </span>
-            <div className="avatar">S</div>
+
+          <div className="topbar-actions">
+            <label className="search-box">
+              <Search size={18} />
+              <input
+                type="search"
+                placeholder="Search assignments..."
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+              {search && (
+                <button
+                  type="button"
+                  className="search-clear"
+                  onClick={() => setSearch("")}
+                  aria-label="Clear search"
+                >
+                  <X size={15} />
+                </button>
+              )}
+            </label>
+            <button
+              className="theme-toggle"
+              onClick={() => setTheme(theme === "light" ? "dark" : "light")}
+              title="Switch dashboard theme"
+              aria-label="Switch dashboard theme"
+            >
+              {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
+              <span>{theme === "light" ? "Dark mode" : "Light mode"}</span>
+            </button>
           </div>
         </header>
 
-        <section className="welcome-section">
+        <section className="welcome-row">
           <div>
-            <div className="eyebrow"><Sparkles size={14} /> YOUR PERSONAL STUDY SPACE</div>
-            <h1>Good things take <span>deadline.</span></h1>
-            <p className="welcome-description">
-              Keep your assignments organized and make every study session count.
+            <div className="eyebrow">
+              <span className="eyebrow-dot" />
+              YOUR ACADEMIC OVERVIEW
+            </div>
+            <h1>Stay on top of your <span>deadlines.</span></h1>
+            <p className="welcome-subtitle">
+              Plan your work, track your progress, and make every study session count.
             </p>
           </div>
-          <div className="welcome-art" aria-hidden="true">
-            <div className="art-circle art-circle-one" />
-            <div className="art-circle art-circle-two" />
-            <div className="art-paper">
-              <div className="paper-check"><CheckCircle2 size={24} /></div>
-              <div className="paper-line long" />
-              <div className="paper-line" />
-              <div className="paper-line short" />
-              <div className="paper-bottom"><Sparkles size={19} /></div>
-            </div>
-            <div className="art-star star-one">✦</div>
-            <div className="art-star star-two">✧</div>
-          </div>
+          <button className="primary-button" onClick={openAddForm}>
+            <Plus size={18} />
+            New assignment
+          </button>
         </section>
 
-        <section className="stats-grid" aria-label="Assignment summary">
-          <div className="stat-card">
-            <div className="stat-top">
-              <span className="stat-icon purple"><BookOpen size={20} /></span>
-              <span className="stat-label">All assignments</span>
-            </div>
-            <div className="stat-number">{stats.total}</div>
-            <div className="stat-footer">Your complete workload</div>
-          </div>
-
-          <div className="stat-card">
-            <div className="stat-top">
-              <span className="stat-icon blue"><Clock3 size={20} /></span>
-              <span className="stat-label">Pending</span>
-            </div>
-            <div className="stat-number">{stats.pending}</div>
-            <div className="stat-footer">Still waiting for you</div>
-          </div>
-
-          <div className="stat-card">
-            <div className="stat-top">
-              <span className="stat-icon green"><CircleCheck size={20} /></span>
-              <span className="stat-label">Completed</span>
-            </div>
-            <div className="stat-number">{stats.completed}</div>
-            <div className="stat-footer">Look at you go!</div>
-          </div>
-
-          <div className="stat-card">
-            <div className="stat-top">
-              <span className="stat-icon orange"><AlertCircle size={20} /></span>
-              <span className="stat-label">Overdue</span>
-            </div>
-            <div className="stat-number">{stats.overdue}</div>
-            <div className="stat-footer">Tasks needing attention</div>
-          </div>
-        </section>
-
-        {(error || notice) && (
-          <div className={`message-banner ${error ? "error-message" : "success-message"}`} role="status">
-            {error ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
-            <span>{error || notice}</span>
-            <button
-              type="button"
-              className="message-close"
-              onClick={() => {
-                setError("");
-                setNotice("");
-              }}
-              aria-label="Dismiss message"
-            >
-              <X size={16} />
+        {error && (
+          <div className="alert alert-error">
+            <AlertCircle size={19} />
+            <span>{error}</span>
+            <button onClick={() => setError("")} aria-label="Dismiss error">
+              <X size={17} />
             </button>
           </div>
         )}
 
-        <section className="workspace-grid">
-          <div className="panel assignment-panel" id="assignments">
-            <div className="panel-heading">
-              <div>
-                <span className="section-kicker">STAY ON TRACK</span>
-                <h2>Your assignments</h2>
-                <p className="panel-subtitle">Everything you need to get done, in one place.</p>
-              </div>
-              <span className="total-pill">{filteredAssignments.length} tasks</span>
+        {notice && (
+          <div className="alert alert-success">
+            <CheckCircle2 size={19} />
+            <span>{notice}</span>
+            <button onClick={() => setNotice("")} aria-label="Dismiss message">
+              <X size={17} />
+            </button>
+          </div>
+        )}
+
+        <section className="stats-grid">
+          <article className="stat-card">
+            <div className="stat-top">
+              <div className="stat-icon stat-blue"><BookOpen size={20} /></div>
+              <span className="stat-label">Total assignments</span>
             </div>
-
-            <div className="assignment-toolbar">
-              <div className="search-box">
-                <Search size={18} />
-                <input
-                  type="search"
-                  placeholder="Search assignments..."
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  aria-label="Search assignments"
-                />
-              </div>
-              <select
-                className="filter-select"
-                value={filter}
-                onChange={(event) => setFilter(event.target.value)}
-                aria-label="Filter assignments"
-              >
-                <option value="all">All tasks</option>
-                <option value="pending">Pending</option>
-                <option value="completed">Completed</option>
-                <option value="overdue">Overdue</option>
-              </select>
+            <div className="stat-value">{stats.total}</div>
+            <div className="stat-footer">
+              <span>Across all subjects</span>
+              <span className="stat-symbol">↗</span>
             </div>
+          </article>
 
-            {loading ? (
-              <div className="loading-state">
-                <LoaderCircle className="loading-spinner" size={30} />
-                <p>Loading your assignments...</p>
-              </div>
-            ) : filteredAssignments.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon"><ClipboardList size={30} /></div>
-                <h3>{search || filter !== "all" ? "No matching assignments" : "Your space is ready!"}</h3>
-                <p>
-                  {search || filter !== "all"
-                    ? "Try another search or change your filter."
-                    : "Add your first assignment using the form. You've got this!"}
-                </p>
-                {(search || filter !== "all") && (
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={() => {
-                      setSearch("");
-                      setFilter("all");
-                    }}
-                  >
-                    Clear filters
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="assignment-list">
-                {filteredAssignments.map((item) => {
-                  const status = getDeadlineStatus(item);
-
-                  return (
-                    <article
-                      className={`assignment-item ${item.completed ? "assignment-done" : ""}`}
-                      key={item.id}
-                    >
-                      <button
-                        type="button"
-                        className={`task-check ${item.completed ? "checked" : ""}`}
-                        onClick={() => toggleCompleted(item)}
-                        aria-label={item.completed ? "Mark as pending" : "Mark as completed"}
-                        title={item.completed ? "Mark as pending" : "Mark as completed"}
-                      >
-                        {item.completed && <CheckCircle2 size={17} />}
-                      </button>
-
-                      <div className="assignment-main">
-                        <div className="assignment-title-row">
-                          <h3>{item.title}</h3>
-                          <span className={`status-badge ${status.type}`}>
-                            <span className="status-dot" />
-                            {status.label}
-                          </span>
-                        </div>
-                        <span className="subject-label">{item.subject || "General"}</span>
-                        {item.description && (
-                          <p className="assignment-description">{item.description}</p>
-                        )}
-                        <div className="assignment-date">
-                          <CalendarDays size={14} />
-                          <span>Due {formatDate(item.due_date)}</span>
-                        </div>
-                      </div>
-
-                      <div className="assignment-actions">
-                        <button
-                          type="button"
-                          className="icon-button edit-button"
-                          onClick={() => startEditing(item)}
-                          title="Edit assignment"
-                          aria-label={`Edit ${item.title}`}
-                        >
-                          <Pencil size={16} />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-button delete-button"
-                          onClick={() => deleteAssignment(item.id)}
-                          title="Delete assignment"
-                          aria-label={`Delete ${item.title}`}
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-
-            <div className="list-footer">
-              <span>Keep going, you're doing great <span className="footer-heart">♡</span></span>
-              <button type="button" className="text-button" onClick={loadAssignments}>
-                Refresh list
-              </button>
+          <article className="stat-card">
+            <div className="stat-top">
+              <div className="stat-icon stat-teal"><Check size={21} /></div>
+              <span className="stat-label">Completed</span>
             </div>
+            <div className="stat-value">{stats.completed}</div>
+            <div className="stat-footer">
+              <span>{stats.percentage}% completion rate</span>
+              <span className="progress-mini">
+                <span style={{ width: `${stats.percentage}%` }} />
+              </span>
+            </div>
+          </article>
+
+          <article className="stat-card">
+            <div className="stat-top">
+              <div className="stat-icon stat-amber"><Clock3 size={20} /></div>
+              <span className="stat-label">Due soon</span>
+            </div>
+            <div className="stat-value">{stats.dueSoon}</div>
+            <div className="stat-footer">
+              <span>Within the next 7 days</span>
+              <span className="stat-symbol">↗</span>
+            </div>
+          </article>
+
+          <article className="stat-card">
+            <div className="stat-top">
+              <div className="stat-icon stat-red"><AlertCircle size={20} /></div>
+              <span className="stat-label">Overdue</span>
+            </div>
+            <div className="stat-value">{stats.overdue}</div>
+            <div className="stat-footer">
+              <span>Needs your attention</span>
+              <span className="stat-symbol">↗</span>
+            </div>
+          </article>
+        </section>
+
+        <section className="assignment-panel">
+          <div className="panel-heading">
+            <div>
+              <div className="panel-title-line">
+                <div className="panel-icon"><ListTodo size={21} /></div>
+                <h2>My assignments</h2>
+                <span className="result-count">{filteredAssignments.length}</span>
+              </div>
+              <p>Everything you need to finish, in one place.</p>
+            </div>
+            <button className="text-button" onClick={openAddForm}>
+              <Plus size={16} />
+              Add new
+            </button>
           </div>
 
-          <aside className="panel form-panel">
-            <div className="form-heading-icon">
-              {editingId !== null ? <Pencil size={22} /> : <Plus size={23} />}
+          <div className="filter-row">
+            {["All", "Not Started", "In Progress", "Completed", "Overdue"].map(
+              (item) => (
+                <button
+                  key={item}
+                  className={`filter-chip ${filter === item ? "selected" : ""}`}
+                  onClick={() => setFilter(item)}
+                >
+                  {item}
+                </button>
+              )
+            )}
+          </div>
+
+          {loading ? (
+            <div className="empty-state">
+              <div className="empty-icon"><Clock3 size={25} /></div>
+              <h3>Loading your assignments</h3>
+              <p>Getting your latest data from the server...</p>
             </div>
-            <div className="form-heading">
-              <span className="section-kicker">{editingId !== null ? "MAKE CHANGES" : "PLAN AHEAD"}</span>
-              <h2>{editingId !== null ? "Edit assignment" : "Add assignment"}</h2>
-              <p>{editingId !== null ? "Update your task details below." : "A little planning goes a long way."}</p>
-            </div>
-
-            <form className="assignment-form" onSubmit={handleSubmit}>
-              <label htmlFor="title">Assignment title <span>*</span></label>
-              <input
-                id="title"
-                name="title"
-                type="text"
-                placeholder="e.g. Research paper"
-                value={form.title}
-                onChange={handleChange}
-                maxLength={150}
-                required
-              />
-
-              <label htmlFor="subject">Subject <span>*</span></label>
-              <input
-                id="subject"
-                name="subject"
-                type="text"
-                placeholder="e.g. Integrative Programming"
-                value={form.subject}
-                onChange={handleChange}
-                maxLength={100}
-                required
-              />
-
-              <label htmlFor="due_date">Due date</label>
-              <div className="date-input-wrap">
-                <CalendarDays size={17} />
-                <input
-                  id="due_date"
-                  name="due_date"
-                  type="date"
-                  value={form.due_date}
-                  onChange={handleChange}
-                />
-              </div>
-
-              <label htmlFor="description">Notes <span className="optional-label">(optional)</span></label>
-              <textarea
-                id="description"
-                name="description"
-                placeholder="Add instructions or reminders..."
-                rows={4}
-                value={form.description}
-                onChange={handleChange}
-                maxLength={1000}
-              />
-
-              <button className="primary-button" type="submit" disabled={saving}>
-                {saving ? (
-                  <><LoaderCircle className="loading-spinner" size={18} /> Saving...</>
-                ) : editingId !== null ? (
-                  <><CheckCircle2 size={18} /> Save changes</>
-                ) : (
-                  <><Plus size={19} /> Add assignment</>
-                )}
-              </button>
-
-              {editingId !== null && (
-                <button className="secondary-button" type="button" onClick={resetForm}>
-                  <X size={17} /> Cancel editing
+          ) : filteredAssignments.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon"><BookOpen size={25} /></div>
+              <h3>{search ? "No matching assignments" : "Nothing here yet"}</h3>
+              <p>
+                {search
+                  ? "Try another search term or change your filters."
+                  : "Add your first assignment to start organizing your deadlines."}
+              </p>
+              {!search && (
+                <button className="primary-button" onClick={openAddForm}>
+                  <Plus size={17} />
+                  Add assignment
                 </button>
               )}
-            </form>
-
-            <div className="form-tip">
-              <div className="tip-icon"><Sparkles size={17} /></div>
-              <p><strong>Study tip</strong> Break big assignments into smaller tasks to make them easier to finish.</p>
             </div>
-          </aside>
+          ) : (
+            <div className="assignment-list">
+              {filteredAssignments.map((item) => {
+                const status = getStatus(item);
+                const deadline = getDeadlineLabel(getDueDate(item), status);
+
+                return (
+                  <article className="assignment-row" key={item.id}>
+                    <button
+                      className={`completion-button ${status === "Completed" ? "is-complete" : ""}`}
+                      onClick={() => toggleCompleted(item)}
+                      title={
+                        status === "Completed"
+                          ? "Mark as not started"
+                          : "Mark as completed"
+                      }
+                      aria-label={`Toggle completion for ${getTitle(item)}`}
+                    >
+                      {status === "Completed" ? (
+                        <CheckCircle2 size={21} />
+                      ) : (
+                        <Circle size={21} />
+                      )}
+                    </button>
+
+                    <div className="assignment-main">
+                      <h3 className={status === "Completed" ? "completed-title" : ""}>
+                        {getTitle(item) || "Untitled assignment"}
+                      </h3>
+                      <p>{getSubject(item) || "No subject specified"}</p>
+                      {item.description && (
+                        <span className="assignment-description">
+                          {item.description}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="assignment-due">
+                      <CalendarDays size={15} />
+                      <span>{formatDate(getDueDate(item))}</span>
+                    </div>
+
+                    <span className={`priority-badge priority-${getPriority(item).toLowerCase()}`}>
+                      {getPriority(item)}
+                    </span>
+
+                    <div className="assignment-status">
+                      <span className={`status-badge status-${status.toLowerCase().replaceAll(" ", "-")}`}>
+                        {status}
+                      </span>
+                      {deadline === "Overdue" && (
+                        <span className="deadline-warning">Overdue</span>
+                      )}
+                      {deadline === "Due today" && (
+                        <span className="deadline-warning today">Due today</span>
+                      )}
+                    </div>
+
+                    <div className="row-actions">
+                      <button
+                        className="icon-button"
+                        onClick={() => openEditForm(item)}
+                        title="Edit assignment"
+                        aria-label={`Edit ${getTitle(item)}`}
+                      >
+                        <Pencil size={16} />
+                      </button>
+                      <button
+                        className="icon-button delete-button"
+                        onClick={() => deleteAssignment(item)}
+                        title="Delete assignment"
+                        aria-label={`Delete ${getTitle(item)}`}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="panel-footer">
+            <span>Showing {filteredAssignments.length} of {assignments.length} assignments</span>
+            <button onClick={loadAssignments} className="refresh-button">
+              Refresh list
+            </button>
+          </div>
         </section>
 
         <footer className="page-footer">
-          <span>Made for better study days.</span>
-          <span>StudySpace <span className="footer-heart">♡</span></span>
+          <span>Class Deadline Tracker</span>
+          <span>Stay focused. Keep progressing.</span>
         </footer>
       </main>
+
+      {formOpen && (
+        <div className="modal-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) closeForm();
+        }}>
+          <section className="assignment-modal" role="dialog" aria-modal="true" aria-labelledby="form-title">
+            <div className="modal-heading">
+              <div>
+                <div className="eyebrow"><span className="eyebrow-dot" /> ASSIGNMENT DETAILS</div>
+                <h2 id="form-title">{editingId !== null ? "Edit assignment" : "Create assignment"}</h2>
+                <p>Keep the details clear so you can stay on track.</p>
+              </div>
+              <button className="icon-button" onClick={closeForm} aria-label="Close form">
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={saveAssignment}>
+              <label className="form-field">
+                <span>Assignment title *</span>
+                <input
+                  name="title"
+                  value={form.title}
+                  onChange={updateForm}
+                  placeholder="e.g. Research paper"
+                  required
+                  maxLength={150}
+                />
+              </label>
+
+              <label className="form-field">
+                <span>Subject or course</span>
+                <input
+                  name="subject"
+                  value={form.subject}
+                  onChange={updateForm}
+                  placeholder="e.g. Information Technology"
+                />
+              </label>
+
+              <div className="form-two-columns">
+                <label className="form-field">
+                  <span>Due date *</span>
+                  <input
+                    name="dueDate"
+                    type="date"
+                    value={form.dueDate}
+                    onChange={updateForm}
+                    required
+                  />
+                </label>
+
+                <label className="form-field">
+                  <span>Priority</span>
+                  <select name="priority" value={form.priority} onChange={updateForm}>
+                    <option>Low</option>
+                    <option>Medium</option>
+                    <option>High</option>
+                  </select>
+                </label>
+              </div>
+
+              <label className="form-field">
+                <span>Status</span>
+                <select name="status" value={form.status} onChange={updateForm}>
+                  <option>Not Started</option>
+                  <option>In Progress</option>
+                  <option>Completed</option>
+                </select>
+              </label>
+
+              <label className="form-field">
+                <span>Description</span>
+                <textarea
+                  name="description"
+                  value={form.description}
+                  onChange={updateForm}
+                  placeholder="Add notes or instructions..."
+                  rows={3}
+                />
+              </label>
+
+              <div className="modal-actions">
+                <button type="button" className="secondary-button" onClick={closeForm}>
+                  Cancel
+                </button>
+                <button type="submit" className="primary-button" disabled={saving}>
+                  {saving ? "Saving..." : <><Check size={17} /> {editingId !== null ? "Save changes" : "Create assignment"}</>}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
-
-export default App;
